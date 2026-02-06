@@ -1,0 +1,85 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: alert-db
+    environment:
+      POSTGRES_USER: ${DB_USER:-alertuser}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-alertpass}
+      POSTGRES_DB: ${DB_NAME:-alertdb}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-alertuser} -d ${DB_NAME:-alertdb}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - alert-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: alert-redis
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - alert-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: alert-backend
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${DB_USER:-alertuser}:${DB_PASSWORD:-alertpass}@db:5432/${DB_NAME:-alertdb}
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=${SECRET_KEY}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - API_KEY=${API_KEY}
+      - DEBUG=false
+      - CORS_ORIGINS=${CORS_ORIGINS:-["http://localhost:3000"]}
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
+      - SLACK_ENABLED=${SLACK_ENABLED:-false}
+      - EMAIL_ENABLED=${EMAIL_ENABLED:-false}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - alert-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: alert-frontend
+    ports:
+      - "80:80"
+      - "443:443"
+    restart: unless-stopped
+    depends_on:
+      - backend
+    networks:
+      - alert-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  alert-network:
+    driver: bridge
